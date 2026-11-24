@@ -215,18 +215,20 @@ def configure_ios_pythonpath(repo_root: Path | str | None = None) -> Path | None
 
 
 def _patch_apple_fm_default_host() -> str:
-    """Ensure ``apple_fm`` defaults to the local iOS bridge instead of localhost:8079."""
+    """Ensure ``apple_fm`` and ``AskAFM`` defaults are used on iOS."""
     target_host = os.environ.get("OPENJARVIS_APPLE_FM_HOST", "http://127.0.0.1:8085")
     try:
         from openjarvis.core import config as cfg_mod
 
-        if hasattr(cfg_mod, "AppleFmEngineConfig"):
-            cfg_mod.AppleFmEngineConfig.host = target_host
-        if hasattr(cfg_mod, "EngineConfig"):
+        if hasattr(cfg_mod, "load_config"):
             orig_load = cfg_mod.load_config
 
             def _ios_load_config(*args: object, **kwargs: object):  # type: ignore[no-untyped-def]
                 cfg = orig_load(*args, **kwargs)
+                if cfg.engine.default == "llamacpp":
+                    cfg.engine.default = "apple_fm"
+                if cfg.intelligence.default_model == "AskAFMLocal":
+                    cfg.intelligence.default_model = "AskAFM"
                 if os.environ.get("OPENJARVIS_APPLE_FM_HOST"):
                     cfg.engine.apple_fm.host = os.environ["OPENJARVIS_APPLE_FM_HOST"]
                 elif cfg.engine.apple_fm.host == "http://localhost:8079":
