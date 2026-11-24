@@ -190,7 +190,7 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
     textarea { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); min-height: 44px; max-height: 140px; }
     button[type="submit"] { background: var(--accent); color: #fff; border: none; border-radius: 12px; padding: 0 18px; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: 0.55; }
-    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+    .modal-backdrop { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
     .modal-backdrop.open { display: flex; }
     .modal { width: 100%; max-width: 480px; max-height: 75vh; background: var(--card); border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
     .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); gap: 8px; }
@@ -203,7 +203,7 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <h1>OpenJarvis iPadOS <span style="font-size:0.75rem;color:var(--muted);font-weight:400">v2.1</span></h1>
+    <h1>OpenJarvis <span id="js-status" style="font-size:0.75rem;color:#ef4444;font-weight:400">v2.2</span></h1>
     <div class="controls">
       <button id="btn-local" class="toggle active" type="button">Local (AFM)</button>
       <button id="btn-cloud" class="toggle" type="button">Cloud (PCC)</button>
@@ -232,152 +232,149 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
     </div>
   </form>
   <script>
-    (function() {
-      let selectedModel = "AskAFM";
-      let attachedFile = null;
-      let currentDir = "";
-      const chat = document.getElementById("chat");
-      const promptEl = document.getElementById("prompt");
-      const sendBtn = document.getElementById("send");
-      const btnLocal = document.getElementById("btn-local");
-      const btnCloud = document.getElementById("btn-cloud");
-      const fileChip = document.getElementById("file-chip");
-      const fileLabel = document.getElementById("file-label");
-      const fileModal = document.getElementById("file-modal");
-      const modalPath = document.getElementById("modal-path");
-      const modalList = document.getElementById("modal-list");
+    var selectedModel = "AskAFM";
+    var attachedFile = null;
+    var currentDir = "";
+    var chat = document.getElementById("chat");
+    var promptEl = document.getElementById("prompt");
+    var sendBtn = document.getElementById("send");
+    var btnLocal = document.getElementById("btn-local");
+    var btnCloud = document.getElementById("btn-cloud");
+    var fileChip = document.getElementById("file-chip");
+    var fileLabel = document.getElementById("file-label");
+    var fileModal = document.getElementById("file-modal");
+    var modalPath = document.getElementById("modal-path");
+    var modalList = document.getElementById("modal-list");
+    var statusEl = document.getElementById("js-status");
+    if (statusEl) { statusEl.textContent = "v2.2 OK"; statusEl.style.color = "#22c55e"; }
 
-      function addMsg(text, role) {
-        const div = document.createElement("div");
-        div.className = "msg " + role;
-        div.textContent = text;
-        chat.appendChild(div);
-        chat.scrollTop = chat.scrollHeight;
-        return div;
-      }
+    function addMsg(text, role) {
+      var div = document.createElement("div");
+      div.className = "msg " + role;
+      div.textContent = text;
+      chat.appendChild(div);
+      chat.scrollTop = chat.scrollHeight;
+      return div;
+    }
 
-      window.onerror = function(msg, _src, line) {
-        addMsg("UI Error (line " + line + "): " + msg, "assistant");
-      };
-      window.onunhandledrejection = function(ev) {
-        addMsg("UI Promise Error: " + (ev && ev.reason ? ev.reason : ev), "assistant");
-      };
+    function clearAttachment() {
+      attachedFile = null;
+      fileChip.classList.remove("visible");
+      fileLabel.textContent = "";
+    }
 
-      function clearAttachment() {
-        attachedFile = null;
-        fileChip.classList.remove("visible");
-        fileLabel.textContent = "";
-      }
-
-      async function loadDir(relDir) {
-        currentDir = relDir || "";
-        modalPath.textContent = "~/Documents" + (currentDir ? "/" + currentDir : "");
-        modalList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Loading...</div>";
-        try {
-          const res = await fetch("/api/files?dir=" + encodeURIComponent(currentDir));
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
-          modalList.innerHTML = "";
-          if (currentDir) {
-            const up = document.createElement("button");
-            up.type = "button";
-            up.className = "file-item";
-            up.innerHTML = "<span>..</span><span class='meta'>Parent</span>";
-            const parent = currentDir.split("/").slice(0, -1).join("/");
-            up.addEventListener("click", () => loadDir(parent));
-            modalList.appendChild(up);
-          }
-          for (const item of (data.entries || [])) {
-            const btn = document.createElement("button");
+    async function loadDir(relDir) {
+      currentDir = relDir || "";
+      modalPath.textContent = "~/Documents" + (currentDir ? "/" + currentDir : "");
+      modalList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Loading...</div>";
+      try {
+        var res = await fetch("/api/files?dir=" + encodeURIComponent(currentDir));
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+        modalList.innerHTML = "";
+        if (currentDir) {
+          var up = document.createElement("button");
+          up.type = "button";
+          up.className = "file-item";
+          up.innerHTML = "<span>..</span><span class='meta'>Parent</span>";
+          var parent = currentDir.split("/").slice(0, -1).join("/");
+          up.onclick = function() { loadDir(parent); };
+          modalList.appendChild(up);
+        }
+        var entries = data.entries || [];
+        for (var i = 0; i < entries.length; i++) {
+          (function(item) {
+            var btn = document.createElement("button");
             btn.type = "button";
             btn.className = "file-item";
-            const label = document.createElement("span");
+            var label = document.createElement("span");
             label.textContent = item.is_dir ? item.name + "/" : item.name;
-            const meta = document.createElement("span");
+            var meta = document.createElement("span");
             meta.className = "meta";
             meta.textContent = item.is_dir ? "Folder" : (item.size + " B");
             btn.appendChild(label);
             btn.appendChild(meta);
-            btn.addEventListener("click", () => item.is_dir ? loadDir(item.rel_path) : pickFile(item.rel_path));
+            btn.onclick = function() {
+              if (item.is_dir) loadDir(item.rel_path);
+              else pickFile(item.rel_path);
+            };
             modalList.appendChild(btn);
-          }
-          if (!(data.entries || []).length) {
-            const empty = document.createElement("div");
-            empty.style.cssText = "padding:12px;color:var(--muted)";
-            empty.textContent = "No files found.";
-            modalList.appendChild(empty);
-          }
-        } catch (err) {
-          modalList.innerHTML = "<div style='padding:12px;color:#ef4444'>Error: " + err + "</div>";
+          })(entries[i]);
         }
+        if (!entries.length) {
+          var empty = document.createElement("div");
+          empty.style.cssText = "padding:12px;color:var(--muted)";
+          empty.textContent = "No files found.";
+          modalList.appendChild(empty);
+        }
+      } catch (err) {
+        modalList.innerHTML = "<div style='padding:12px;color:#ef4444'>Error: " + err + "</div>";
       }
+    }
 
-      async function pickFile(relPath) {
-        try {
-          const res = await fetch("/api/file?path=" + encodeURIComponent(relPath));
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Failed to read file");
-          attachedFile = { name: data.name, text: data.content };
-          fileLabel.textContent = data.name + " (" + data.size + " B)";
-          fileChip.classList.add("visible");
-          fileModal.classList.remove("open");
-        } catch (err) {
-          addMsg("Could not read file: " + err, "assistant");
-        }
+    async function pickFile(relPath) {
+      try {
+        var res = await fetch("/api/file?path=" + encodeURIComponent(relPath));
+        var data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to read file");
+        attachedFile = { name: data.name, text: data.content };
+        fileLabel.textContent = data.name + " (" + data.size + " B)";
+        fileChip.classList.add("visible");
+        fileModal.classList.remove("open");
+      } catch (err) {
+        addMsg("Could not read file: " + err, "assistant");
       }
+    }
 
-      function setModel(model) {
-        selectedModel = model;
-        btnLocal.classList.toggle("active", model === "AskAFM");
-        btnCloud.classList.toggle("active", model === "AskAFMCloud");
+    function setModel(model) {
+      selectedModel = model;
+      btnLocal.classList.toggle("active", model === "AskAFM");
+      btnCloud.classList.toggle("active", model === "AskAFMCloud");
+    }
+
+    btnLocal.onclick = function() { setModel("AskAFM"); };
+    btnCloud.onclick = function() { setModel("AskAFMCloud"); };
+    document.getElementById("btn-attach").onclick = function() {
+      fileModal.classList.add("open");
+      loadDir(currentDir);
+    };
+    document.getElementById("modal-close").onclick = function() {
+      fileModal.classList.remove("open");
+    };
+    fileModal.onclick = function(e) {
+      if (e.target === fileModal) fileModal.classList.remove("open");
+    };
+    document.getElementById("file-clear").onclick = clearAttachment;
+    document.getElementById("btn-stop").onclick = async function() {
+      await fetch("/shutdown");
+      addMsg("Server shutting down.", "assistant");
+    };
+
+    document.getElementById("composer").onsubmit = async function(e) {
+      e.preventDefault();
+      var text = promptEl.value.trim();
+      if (!text) return;
+      var file = attachedFile;
+      var fullPrompt = file ? text + "\n\n[File: " + file.name + "]\n" + file.text : text;
+      promptEl.value = "";
+      clearAttachment();
+      addMsg(file ? text + "\n[" + file.name + "]" : text, "user");
+      var pending = addMsg("Thinking (" + selectedModel + ")...", "assistant");
+      sendBtn.disabled = true;
+      try {
+        var res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ model: selectedModel, prompt: fullPrompt })
+        });
+        var data = await res.json();
+        pending.textContent = data.response || data.error || JSON.stringify(data);
+      } catch (err) {
+        pending.textContent = "Error: " + err;
+      } finally {
+        sendBtn.disabled = false;
       }
-
-      document.getElementById("btn-attach").addEventListener("click", () => {
-        fileModal.classList.add("open");
-        loadDir(currentDir);
-      });
-      document.getElementById("modal-close").addEventListener("click", () => fileModal.classList.remove("open"));
-      fileModal.addEventListener("click", (e) => { if (e.target === fileModal) fileModal.classList.remove("open"); });
-      document.getElementById("file-clear").addEventListener("click", clearAttachment);
-      btnLocal.addEventListener("click", () => setModel("AskAFM"));
-      btnCloud.addEventListener("click", () => setModel("AskAFMCloud"));
-      document.getElementById("btn-stop").addEventListener("click", async () => {
-        try {
-          await fetch("/shutdown");
-          addMsg("Server shutting down.", "assistant");
-        } catch (err) {
-          addMsg("Shutdown error: " + err, "assistant");
-        }
-      });
-
-      document.getElementById("composer").addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const text = promptEl.value.trim();
-        if (!text) return;
-        const file = attachedFile;
-        const fullPrompt = file
-          ? text + "\n\n[File: " + file.name + "]\n" + file.text
-          : text;
-        promptEl.value = "";
-        clearAttachment();
-        addMsg(file ? text + "\n[" + file.name + "]" : text, "user");
-        const pending = addMsg("Thinking (" + selectedModel + ")...", "assistant");
-        sendBtn.disabled = true;
-        try {
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ model: selectedModel, prompt: fullPrompt })
-          });
-          const data = await res.json();
-          pending.textContent = data.response || data.error || JSON.stringify(data);
-        } catch (err) {
-          pending.textContent = "Error: " + err;
-        } finally {
-          sendBtn.disabled = false;
-        }
-      });
-    })();
+    };
   </script>
 </body>
 </html>
