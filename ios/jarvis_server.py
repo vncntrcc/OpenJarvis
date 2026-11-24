@@ -203,13 +203,14 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <h1>OpenJarvis <span id="js-status" style="font-size:0.75rem;color:#ef4444;font-weight:400">v2.2</span></h1>
+    <h1>OpenJarvis <span id="js-status" style="font-size:0.75rem;color:#ef4444;font-weight:400">v2.3</span></h1>
     <div class="controls">
       <button id="btn-local" class="toggle active" type="button">Local (AFM)</button>
       <button id="btn-cloud" class="toggle" type="button">Cloud (PCC)</button>
       <button id="btn-stop" class="shutdown" type="button">Stop</button>
     </div>
   </header>
+  <script>var _s=document.getElementById("js-status");if(_s){_s.textContent="v2.3 JS";_s.style.color="#eab308";}</script>
   <main id="chat"></main>
   <div id="file-modal" class="modal-backdrop">
     <div class="modal">
@@ -231,46 +232,51 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
       <button id="send" type="submit">Send</button>
     </div>
   </form>
-  <script>
-    var selectedModel = "AskAFM";
-    var attachedFile = null;
-    var currentDir = "";
-    var chat = document.getElementById("chat");
-    var promptEl = document.getElementById("prompt");
-    var sendBtn = document.getElementById("send");
-    var btnLocal = document.getElementById("btn-local");
-    var btnCloud = document.getElementById("btn-cloud");
-    var fileChip = document.getElementById("file-chip");
-    var fileLabel = document.getElementById("file-label");
-    var fileModal = document.getElementById("file-modal");
-    var modalPath = document.getElementById("modal-path");
-    var modalList = document.getElementById("modal-list");
-    var statusEl = document.getElementById("js-status");
-    if (statusEl) { statusEl.textContent = "v2.2 OK"; statusEl.style.color = "#22c55e"; }
+  <script src="/app.js"></script>
+</body>
+</html>
+"""
 
-    function addMsg(text, role) {
-      var div = document.createElement("div");
-      div.className = "msg " + role;
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-      return div;
-    }
+_MOBILE_UI_JS = """(function() {
+  var selectedModel = "AskAFM";
+  var attachedFile = null;
+  var currentDir = "";
+  var chat = document.getElementById("chat");
+  var promptEl = document.getElementById("prompt");
+  var sendBtn = document.getElementById("send");
+  var btnLocal = document.getElementById("btn-local");
+  var btnCloud = document.getElementById("btn-cloud");
+  var fileChip = document.getElementById("file-chip");
+  var fileLabel = document.getElementById("file-label");
+  var fileModal = document.getElementById("file-modal");
+  var modalPath = document.getElementById("modal-path");
+  var modalList = document.getElementById("modal-list");
+  var statusEl = document.getElementById("js-status");
+  if (statusEl) { statusEl.textContent = "v2.3 OK"; statusEl.style.color = "#22c55e"; }
 
-    function clearAttachment() {
-      attachedFile = null;
-      fileChip.classList.remove("visible");
-      fileLabel.textContent = "";
-    }
+  function addMsg(text, role) {
+    var div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = text;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
 
-    async function loadDir(relDir) {
-      currentDir = relDir || "";
-      modalPath.textContent = "~/Documents" + (currentDir ? "/" + currentDir : "");
-      modalList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Loading...</div>";
-      try {
-        var res = await fetch("/api/files?dir=" + encodeURIComponent(currentDir));
-        var data = await res.json();
-        if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+  function clearAttachment() {
+    attachedFile = null;
+    fileChip.classList.remove("visible");
+    fileLabel.textContent = "";
+  }
+
+  function loadDir(relDir) {
+    currentDir = relDir || "";
+    modalPath.textContent = "~/Documents" + (currentDir ? "/" + currentDir : "");
+    modalList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Loading...</div>";
+    fetch("/api/files?dir=" + encodeURIComponent(currentDir))
+      .then(function(res) { return res.json().then(function(data) { return { ok: res.ok, status: res.status, data: data }; }); })
+      .then(function(r) {
+        if (!r.ok) throw new Error(r.data.error || ("HTTP " + r.status));
         modalList.innerHTML = "";
         if (currentDir) {
           var up = document.createElement("button");
@@ -281,7 +287,7 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
           up.onclick = function() { loadDir(parent); };
           modalList.appendChild(up);
         }
-        var entries = data.entries || [];
+        var entries = r.data.entries || [];
         for (var i = 0; i < entries.length; i++) {
           (function(item) {
             var btn = document.createElement("button");
@@ -307,77 +313,80 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
           empty.textContent = "No files found.";
           modalList.appendChild(empty);
         }
-      } catch (err) {
+      })
+      .catch(function(err) {
         modalList.innerHTML = "<div style='padding:12px;color:#ef4444'>Error: " + err + "</div>";
-      }
-    }
+      });
+  }
 
-    async function pickFile(relPath) {
-      try {
-        var res = await fetch("/api/file?path=" + encodeURIComponent(relPath));
-        var data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to read file");
-        attachedFile = { name: data.name, text: data.content };
-        fileLabel.textContent = data.name + " (" + data.size + " B)";
+  function pickFile(relPath) {
+    fetch("/api/file?path=" + encodeURIComponent(relPath))
+      .then(function(res) { return res.json().then(function(data) { return { ok: res.ok, data: data }; }); })
+      .then(function(r) {
+        if (!r.ok) throw new Error(r.data.error || "Failed to read file");
+        attachedFile = { name: r.data.name, text: r.data.content };
+        fileLabel.textContent = r.data.name + " (" + r.data.size + " B)";
         fileChip.classList.add("visible");
         fileModal.classList.remove("open");
-      } catch (err) {
+      })
+      .catch(function(err) {
         addMsg("Could not read file: " + err, "assistant");
-      }
-    }
+      });
+  }
 
-    function setModel(model) {
-      selectedModel = model;
-      btnLocal.classList.toggle("active", model === "AskAFM");
-      btnCloud.classList.toggle("active", model === "AskAFMCloud");
-    }
+  function setModel(model) {
+    selectedModel = model;
+    btnLocal.classList.toggle("active", model === "AskAFM");
+    btnCloud.classList.toggle("active", model === "AskAFMCloud");
+  }
 
-    btnLocal.onclick = function() { setModel("AskAFM"); };
-    btnCloud.onclick = function() { setModel("AskAFMCloud"); };
-    document.getElementById("btn-attach").onclick = function() {
-      fileModal.classList.add("open");
-      loadDir(currentDir);
-    };
-    document.getElementById("modal-close").onclick = function() {
-      fileModal.classList.remove("open");
-    };
-    fileModal.onclick = function(e) {
-      if (e.target === fileModal) fileModal.classList.remove("open");
-    };
-    document.getElementById("file-clear").onclick = clearAttachment;
-    document.getElementById("btn-stop").onclick = async function() {
-      await fetch("/shutdown");
+  btnLocal.onclick = function() { setModel("AskAFM"); };
+  btnCloud.onclick = function() { setModel("AskAFMCloud"); };
+  document.getElementById("btn-attach").onclick = function() {
+    fileModal.classList.add("open");
+    loadDir(currentDir);
+  };
+  document.getElementById("modal-close").onclick = function() {
+    fileModal.classList.remove("open");
+  };
+  fileModal.onclick = function(e) {
+    if (e.target === fileModal) fileModal.classList.remove("open");
+  };
+  document.getElementById("file-clear").onclick = clearAttachment;
+  document.getElementById("btn-stop").onclick = function() {
+    fetch("/shutdown").then(function() {
       addMsg("Server shutting down.", "assistant");
-    };
+    });
+  };
 
-    document.getElementById("composer").onsubmit = async function(e) {
-      e.preventDefault();
-      var text = promptEl.value.trim();
-      if (!text) return;
-      var file = attachedFile;
-      var fullPrompt = file ? text + "\n\n[File: " + file.name + "]\n" + file.text : text;
-      promptEl.value = "";
-      clearAttachment();
-      addMsg(file ? text + "\n[" + file.name + "]" : text, "user");
-      var pending = addMsg("Thinking (" + selectedModel + ")...", "assistant");
-      sendBtn.disabled = true;
-      try {
-        var res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model: selectedModel, prompt: fullPrompt })
-        });
-        var data = await res.json();
+  document.getElementById("composer").onsubmit = function(e) {
+    e.preventDefault();
+    var text = promptEl.value.trim();
+    if (!text) return;
+    var file = attachedFile;
+    var fullPrompt = file ? text + "\\n\\n[File: " + file.name + "]\\n" + file.text : text;
+    promptEl.value = "";
+    clearAttachment();
+    addMsg(file ? text + "\\n[" + file.name + "]" : text, "user");
+    var pending = addMsg("Thinking (" + selectedModel + ")...", "assistant");
+    sendBtn.disabled = true;
+    fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: selectedModel, prompt: fullPrompt })
+    })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
         pending.textContent = data.response || data.error || JSON.stringify(data);
-      } catch (err) {
+      })
+      .catch(function(err) {
         pending.textContent = "Error: " + err;
-      } finally {
+      })
+      .finally(function() {
         sendBtn.disabled = false;
-      }
-    };
-  </script>
-</body>
-</html>
+      });
+  };
+})();
 """
 
 
@@ -670,6 +679,14 @@ class JarvisBridgeHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         qs = parse_qs(parsed.query)
+        if path == "/app.js":
+            self._send_bytes(
+                HTTPStatus.OK,
+                "application/javascript; charset=utf-8",
+                _MOBILE_UI_JS.encode("utf-8"),
+                {"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
+            return
         if path == "/v1/models":
             self._send_json(HTTPStatus.OK, _models_payload())
             return
@@ -881,6 +898,12 @@ async def start_backend_server_async(
         if resolved is not None:
             file_path, headers = resolved
             return web.FileResponse(file_path, headers=headers)
+        if request.path == "/app.js":
+            return web.Response(
+                text=_MOBILE_UI_JS,
+                content_type="application/javascript",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
         if request.path in ("/", "/index.html"):
             return web.Response(
                 text=_MOBILE_UI_HTML,
