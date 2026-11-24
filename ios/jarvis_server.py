@@ -594,18 +594,23 @@ def _list_documents_dir(rel_dir: str = "") -> dict[str, Any]:
     if not target.is_relative_to(root) or not target.is_dir():
         raise ValueError("Invalid directory")
     entries: list[dict[str, Any]] = []
-    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+    for child in sorted(target.iterdir(), key=lambda p: p.name.lower()):
         if child.name.startswith("."):
             continue
-        is_dir = child.is_dir()
+        try:
+            is_dir = child.is_dir()
+            size = 0 if is_dir else child.stat().st_size
+        except OSError:
+            continue
         entries.append(
             {
                 "name": child.name,
                 "rel_path": str(child.relative_to(root)),
                 "is_dir": is_dir,
-                "size": 0 if is_dir else child.stat().st_size,
+                "size": size,
             }
         )
+    entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
     return {"dir": clean, "entries": entries}
 
 
