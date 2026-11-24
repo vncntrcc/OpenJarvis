@@ -45,6 +45,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 DEFAULT_HOST = os.environ.get("JARVIS_IOS_HOST", "127.0.0.1")
 DEFAULT_PORT = int(os.environ.get("JARVIS_IOS_PORT", "8085"))
@@ -168,7 +169,7 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
       :root { --bg: #f5f7fb; --card: #ffffff; --text: #111827; --muted: #6b7280; --accent: #2563eb; --border: #e5e7eb; }
     }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: var(--bg); color: var(--text); display: flex; flex-direction: column; height: 100dvh; }
     header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--card); }
     header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
     .controls { display: flex; gap: 6px; align-items: center; }
@@ -183,12 +184,20 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
     .file-chip { display: none; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 10px; border-radius: 8px; background: var(--bg); border: 1px solid var(--border); font-size: 0.8rem; color: var(--muted); }
     .file-chip.visible { display: flex; }
     .file-chip button { border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 4px; }
-    .composer-row { display: flex; gap: 8px; align-items: stretch; position: relative; }
-    .file-input-sr { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
-    .attach-btn { display: inline-flex; align-items: center; border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 12px; padding: 0 12px; font-size: 0.85rem; cursor: pointer; white-space: nowrap; user-select: none; -webkit-user-select: none; }
+    .composer-row { display: flex; gap: 8px; align-items: stretch; }
+    .attach-btn { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 12px; padding: 0 12px; font-size: 0.85rem; cursor: pointer; white-space: nowrap; }
     textarea { flex: 1; resize: none; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; font: inherit; background: var(--bg); color: var(--text); min-height: 44px; max-height: 140px; }
     button[type="submit"] { background: var(--accent); color: #fff; border: none; border-radius: 12px; padding: 0 18px; font-weight: 600; cursor: pointer; }
     button:disabled { opacity: 0.55; }
+    .modal-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 50; align-items: center; justify-content: center; padding: 16px; }
+    .modal-backdrop.open { display: flex; }
+    .modal { width: 100%; max-width: 480px; max-height: 75vh; background: var(--card); border: 1px solid var(--border); border-radius: 14px; display: flex; flex-direction: column; overflow: hidden; }
+    .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); gap: 8px; }
+    .modal-head strong { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .modal-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+    .file-item { text-align: left; border: 1px solid transparent; background: transparent; color: var(--text); padding: 9px 10px; border-radius: 8px; font-size: 0.88rem; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+    .file-item:hover { background: var(--bg); border-color: var(--border); }
+    .file-item span.meta { color: var(--muted); font-size: 0.78rem; }
   </style>
 </head>
 <body>
@@ -201,14 +210,22 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
     </div>
   </header>
   <main id="chat"></main>
+  <div id="file-modal" class="modal-backdrop">
+    <div class="modal">
+      <div class="modal-head">
+        <strong id="modal-path">~/Documents</strong>
+        <button id="modal-close" class="toggle" type="button">Close</button>
+      </div>
+      <div id="modal-list" class="modal-list"></div>
+    </div>
+  </div>
   <form id="composer">
     <div id="file-chip" class="file-chip">
       <span id="file-label"></span>
       <button id="file-clear" type="button" aria-label="Remove file">&times;</button>
     </div>
     <div class="composer-row">
-      <input id="file-input" class="file-input-sr" type="file" />
-      <label id="btn-attach" class="attach-btn" for="file-input">+ File</label>
+      <button id="btn-attach" class="attach-btn" type="button">+ File</button>
       <textarea id="prompt" rows="1" placeholder="Ask OpenJarvis..." required></textarea>
       <button id="send" type="submit">Send</button>
     </div>
@@ -216,36 +233,87 @@ _MOBILE_UI_HTML = """<!DOCTYPE html>
   <script>
     let selectedModel = "AskAFM";
     let attachedFile = null;
+    let currentDir = "";
     const chat = document.getElementById("chat");
     const promptEl = document.getElementById("prompt");
     const sendBtn = document.getElementById("send");
     const btnLocal = document.getElementById("btn-local");
     const btnCloud = document.getElementById("btn-cloud");
-    const fileInput = document.getElementById("file-input");
     const fileChip = document.getElementById("file-chip");
     const fileLabel = document.getElementById("file-label");
+    const fileModal = document.getElementById("file-modal");
+    const modalPath = document.getElementById("modal-path");
+    const modalList = document.getElementById("modal-list");
 
     function clearAttachment() {
       attachedFile = null;
-      fileInput.value = "";
       fileChip.classList.remove("visible");
       fileLabel.textContent = "";
     }
 
-    document.getElementById("file-clear").onclick = clearAttachment;
-    fileInput.onchange = async () => {
-      const file = fileInput.files && fileInput.files[0];
-      if (!file) return;
+    async function loadDir(relDir) {
+      currentDir = relDir || "";
+      modalPath.textContent = "~/Documents" + (currentDir ? "/" + currentDir : "");
+      modalList.innerHTML = "<div style='padding:12px;color:var(--muted)'>Loading...</div>";
       try {
-        const text = await file.text();
-        attachedFile = { name: file.name, text };
-        fileLabel.textContent = file.name + " (" + file.size + " B)";
+        const res = await fetch("/api/files?dir=" + encodeURIComponent(currentDir));
+        const data = await res.json();
+        modalList.innerHTML = "";
+        if (currentDir) {
+          const up = document.createElement("button");
+          up.type = "button";
+          up.className = "file-item";
+          up.innerHTML = "<span>..</span><span class='meta'>Parent</span>";
+          const parent = currentDir.split("/").slice(0, -1).join("/");
+          up.onclick = () => loadDir(parent);
+          modalList.appendChild(up);
+        }
+        for (const item of (data.entries || [])) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "file-item";
+          const label = document.createElement("span");
+          label.textContent = item.is_dir ? item.name + "/" : item.name;
+          const meta = document.createElement("span");
+          meta.className = "meta";
+          meta.textContent = item.is_dir ? "Folder" : (item.size + " B");
+          btn.appendChild(label);
+          btn.appendChild(meta);
+          btn.onclick = () => item.is_dir ? loadDir(item.rel_path) : pickFile(item.rel_path);
+          modalList.appendChild(btn);
+        }
+        if (!(data.entries || []).length) {
+          const empty = document.createElement("div");
+          empty.style.cssText = "padding:12px;color:var(--muted)";
+          empty.textContent = "No files found.";
+          modalList.appendChild(empty);
+        }
+      } catch (err) {
+        modalList.innerHTML = "<div style='padding:12px;color:#ef4444'>Error: " + err + "</div>";
+      }
+    }
+
+    async function pickFile(relPath) {
+      try {
+        const res = await fetch("/api/file?path=" + encodeURIComponent(relPath));
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to read file");
+        attachedFile = { name: data.name, text: data.content };
+        fileLabel.textContent = data.name + " (" + data.size + " B)";
         fileChip.classList.add("visible");
+        fileModal.classList.remove("open");
       } catch (err) {
         addMsg("Could not read file: " + err, "assistant");
-        clearAttachment();
       }
+    }
+
+    document.getElementById("btn-attach").onclick = () => {
+      fileModal.classList.add("open");
+      loadDir(currentDir);
     };
+    document.getElementById("modal-close").onclick = () => fileModal.classList.remove("open");
+    fileModal.onclick = (e) => { if (e.target === fileModal) fileModal.classList.remove("open"); };
+    document.getElementById("file-clear").onclick = clearAttachment;
 
     function setModel(model) {
       selectedModel = model;
@@ -493,6 +561,48 @@ def _resolve_static_asset(
     return None
 
 
+def _documents_root() -> Path:
+    docs = Path.home() / "Documents"
+    return docs if docs.is_dir() else Path.home()
+
+
+def _list_documents_dir(rel_dir: str = "") -> dict[str, Any]:
+    root = _documents_root().resolve()
+    clean = rel_dir.strip().lstrip("/")
+    target = (root / clean).resolve() if clean else root
+    if not target.is_relative_to(root) or not target.is_dir():
+        raise ValueError("Invalid directory")
+    entries: list[dict[str, Any]] = []
+    for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        if child.name.startswith("."):
+            continue
+        is_dir = child.is_dir()
+        entries.append(
+            {
+                "name": child.name,
+                "rel_path": str(child.relative_to(root)),
+                "is_dir": is_dir,
+                "size": 0 if is_dir else child.stat().st_size,
+            }
+        )
+    return {"dir": clean, "entries": entries}
+
+
+def _read_documents_file(rel_path: str) -> dict[str, Any]:
+    root = _documents_root().resolve()
+    clean = rel_path.strip().lstrip("/")
+    if not clean:
+        raise ValueError("Missing 'path'")
+    target = (root / clean).resolve()
+    if not target.is_relative_to(root) or not target.is_file():
+        raise FileNotFoundError(f"File not found: {rel_path}")
+    size = target.stat().st_size
+    if size > 512 * 1024:
+        raise ValueError("File too large (max 512 KB)")
+    content = target.read_text(encoding="utf-8", errors="replace")
+    return {"name": target.name, "path": clean, "size": size, "content": content}
+
+
 class JarvisBridgeHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the OpenJarvis iPadOS bridge (stdlib fallback)."""
 
@@ -527,7 +637,12 @@ class JarvisBridgeHandler(BaseHTTPRequestHandler):
         self._send_bytes(status, "application/json; charset=utf-8", body)
 
     def _send_html(self, status: int, html: str) -> None:
-        self._send_bytes(status, "text/html; charset=utf-8", html.encode("utf-8"))
+        self._send_bytes(
+            status,
+            "text/html; charset=utf-8",
+            html.encode("utf-8"),
+            {"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
 
     def _read_json_body(self) -> dict[str, Any]:
         length = int(self.headers.get("Content-Length", "0"))
@@ -540,9 +655,25 @@ class JarvisBridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        path = self.path.split("?", 1)[0]
+        parsed = urlparse(self.path)
+        path = parsed.path
+        qs = parse_qs(parsed.query)
         if path == "/v1/models":
             self._send_json(HTTPStatus.OK, _models_payload())
+            return
+        if path == "/api/files":
+            try:
+                self._send_json(HTTPStatus.OK, _list_documents_dir(qs.get("dir", [""])[0]))
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        if path == "/api/file":
+            try:
+                self._send_json(HTTPStatus.OK, _read_documents_file(qs.get("path", [""])[0]))
+            except FileNotFoundError as exc:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": str(exc)})
+            except ValueError as exc:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             return
         if path in ("/shutdown", "/api/v1/system/shutdown"):
             self._send_json(HTTPStatus.OK, {"status": "shutting_down"})
@@ -717,6 +848,20 @@ async def start_backend_server_async(
         )
         return web.Response(body=payload, content_type=content_type.split(";")[0])
 
+    async def handle_api_files(request: web.Request) -> web.Response:
+        try:
+            return web.json_response(_list_documents_dir(request.query.get("dir", "")))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
+    async def handle_api_file(request: web.Request) -> web.Response:
+        try:
+            return web.json_response(_read_documents_file(request.query.get("path", "")))
+        except FileNotFoundError as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+
     async def handle_spa_or_ui(request: web.Request) -> web.StreamResponse:
         resolved = _resolve_static_asset(
             static_root, request.path, request.headers.get("Accept-Encoding", "")
@@ -725,11 +870,17 @@ async def start_backend_server_async(
             file_path, headers = resolved
             return web.FileResponse(file_path, headers=headers)
         if request.path in ("/", "/index.html"):
-            return web.Response(text=_MOBILE_UI_HTML, content_type="text/html")
+            return web.Response(
+                text=_MOBILE_UI_HTML,
+                content_type="text/html",
+                headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+            )
         return web.json_response({"error": "Not found"}, status=404)
 
     app = web.Application(middlewares=[cors_middleware])
     app.router.add_get("/v1/models", handle_models)
+    app.router.add_get("/api/files", handle_api_files)
+    app.router.add_get("/api/file", handle_api_file)
     app.router.add_get("/shutdown", handle_shutdown)
     app.router.add_get("/api/v1/system/shutdown", handle_shutdown)
     app.router.add_post("/api/chat", handle_api_chat)
